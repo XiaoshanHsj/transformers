@@ -906,6 +906,13 @@ class HubertFeedForward(nn.Module):
         self.output_dense = nn.Linear(config.intermediate_size, config.hidden_size)
         self.output_dropout = nn.Dropout(config.hidden_dropout)
 
+    def reset_parameters(self):
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                torch.nn.init.xavier_uniform_(module.weight)
+                if module.bias is not None:
+                    torch.nn.init.constant_(module.bias, 0)
+
     def forward(self, hidden_states):
         hidden_states = self.intermediate_dense(hidden_states)
         hidden_states = self.intermediate_act_fn(hidden_states)
@@ -914,6 +921,95 @@ class HubertFeedForward(nn.Module):
         hidden_states = self.output_dense(hidden_states)
         hidden_states = self.output_dropout(hidden_states)
         return hidden_states
+
+class SpeakerAdapter(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.ada_config = copy.copy(config)
+        self.ada_config.intermediate_size = config.spk_intermediate_size
+        self.ada_feed_forward_list = nn.ModuleList([HubertFeedForward(self.ada_config) for _ in range(self.ada_config.spk_num)])
+        self.ada_layer_norm_list = nn.ModuleList([nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps) for _ in range(self.ada_config.spk_num)])
+
+    def forward(self, spk_id, hidden_states):
+        output = []
+        for i, sid in enumerate(spk_id):
+            i_output = self.ada_layer_norm_list[sid](self.ada_feed_forward_list[sid](hidden_states[i]))
+            output.append(i_output)
+        select_output = torch.stack(output)
+        hidden_states = hidden_states + select_output
+        return hidden_states
+
+    def reset_parameters(self):
+        # 重置所有的HubertFeedForward层  
+        for module in self.ada_feed_forward_list:
+            module.reset_parameters()
+
+class DependentSeveAdapter(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.ada_config = copy.copy(config)
+        self.ada_config.intermediate_size = config.seve_intermediate_size
+        self.ada_feed_forward_list = nn.ModuleList([HubertFeedForward(self.ada_config) for _ in range(self.ada_config.seve_num)])
+        self.ada_layer_norm_list = nn.ModuleList([nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps) for _ in range(self.ada_config.seve_num)])
+
+    def forward(self, seve_id, hidden_states):
+        output = []
+        for i, sid in enumerate(seve_id):
+            i_output = self.ada_layer_norm_list[sid](self.ada_feed_forward_list[sid](hidden_states[i]))
+            output.append(i_output)
+        select_output = torch.stack(output)
+        hidden_states = hidden_states + select_output
+        return hidden_states
+
+    def reset_parameters(self):
+        # 重置所有的HubertFeedForward层  
+        for module in self.ada_feed_forward_list:
+            module.reset_parameters()
+
+class HUB(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        # self.select_spk = nn.Linear(self.config.spk_num, self.config.hidden_size)
+        self.spk_paramter = nn.Parameter(torch.zeros(self.config.spk_num, self.config.hidden_size))
+        nn.init.kaiming_uniform_(self.spk_paramter, a=math.sqrt(5))
+
+    def forward(self, spk_id, hidden_states):
+        spk_one_hot = torch.nn.functional.one_hot(torch.tensor(spk_id), num_classes=self.config.spk_num).to(hidden_states.dtype).to(hidden_states.device)
+        # selectd_hidden_states = self.sig(self.select_spk(spk_one_hot))
+        selectd_hidden_states = spk_one_hot @ self.spk_paramter
+        seq_len = hidden_states.size(1)
+        hidden_states = hidden_states + selectd_hidden_states.unsqueeze(1).expand(-1, seq_len, -1)
+        return hidden_states
+
+class LHUC(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        # self.select_spk = nn.Linear(self.config.spk_num, self.config.hidden_size)
+        self.spk_paramter = nn.Parameter(torch.zeros(self.config.spk_num, self.config.hidden_size))
+        nn.init.kaiming_uniform_(self.spk_paramter, a=math.sqrt(5))
+        self.sig = nn.Sigmoid()
+    def forward(self, spk_id, hidden_states):
+        spk_one_hot = torch.nn.functional.one_hot(torch.tensor(spk_id), num_classes=self.config.spk_num).to(hidden_states.dtype).to(hidden_states.device)
+        # selectd_hidden_states = self.sig(self.select_spk(spk_one_hot))
+        selectd_hidden_states = self.sig(spk_one_hot @ self.spk_paramter) * 2
+        hidden_states = hidden_states * selectd_hidden_states.unsqueeze(1)
+        return hidden_states
+
+class Seve_LHUC(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        self.seve_paramter = nn.Parameter(torch.zeros(self.config.seve_num, self.config.hidden_size))
+        nn.init.kaiming_uniform_(self.seve_paramter, a=math.sqrt(5))
+        self.sig = nn.Sigmoid()
+    def forward(self, seve_id, hidden_states):
+        seve_one_hot = torch.nn.functional.one_hot(torch.tensor(seve_id), num_classes=self.config.seve_num).to(hidden_states.dtype).to(hidden_states.device)
+        selectd_hidden_states = self.sig(seve_one_hot @ self.seve_paramter) * 2
+        hidden_states = hidden_states * selectd_hidden_states.unsqueeze(1)
+        return hidden_states
+
 
 
 # Copied from transformers.models.wav2vec2.modeling_wav2vec2.Wav2Vec2EncoderLayer with Wav2Vec2->Hubert, WAV2VEC2->HUBERT
@@ -1118,6 +1214,19 @@ class HubertEncoderStableLayerNorm(nn.Module):
         self.pos_conv_embed = HubertPositionalConvEmbedding(config)
         self.layer_norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(config.hidden_dropout)
+        if self.config.hub:
+            self.ada_transf = HUB(config)
+        else:
+            if self.config.seve_group:
+                if self.config.seve_layer:
+                    self.seve_ada_transf = DependentSeveAdapter(config)
+                else:
+                    self.seve_ada_transf = Seve_LHUC(config)
+            if self.config.use_lhuc:
+                if self.config.spk_layer:
+                    self.ada_transf = SpeakerAdapter(config)
+                else:
+                    self.ada_transf = LHUC(config)
         self.layers = nn.ModuleList(
             [HubertEncoderLayerStableLayerNorm(config) for _ in range(config.num_hidden_layers)]
         )
@@ -1127,6 +1236,8 @@ class HubertEncoderStableLayerNorm(nn.Module):
     def forward(
         self,
         hidden_states,
+        spk_id,
+        seve_id=None,
         attention_mask=None,
         output_attentions=False,
         output_hidden_states=False,
@@ -1153,6 +1264,11 @@ class HubertEncoderStableLayerNorm(nn.Module):
         position_embeddings = self.pos_conv_embed(hidden_states)
         hidden_states = hidden_states + position_embeddings
         hidden_states = self.dropout(hidden_states)
+
+        if self.config.seve_group:
+            hidden_states = self.seve_ada_transf(seve_id, hidden_states)
+        if self.config.use_lhuc:
+            hidden_states = self.ada_transf(spk_id, hidden_states)
 
         deepspeed_zero3_is_enabled = is_deepspeed_zero3_enabled()
 
@@ -1397,6 +1513,8 @@ class HubertModel(HubertPreTrainedModel):
     def forward(
         self,
         input_values: Optional[torch.Tensor],
+        spk_id: Optional[torch.Tensor],
+        seve_id: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         mask_time_indices: Optional[torch.FloatTensor] = None,
         output_attentions: Optional[bool] = None,
@@ -1448,6 +1566,8 @@ class HubertModel(HubertPreTrainedModel):
 
         encoder_outputs = self.encoder(
             hidden_states,
+            spk_id,
+            seve_id=seve_id,
             attention_mask=attention_mask,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
@@ -1559,6 +1679,8 @@ class HubertForCTC(HubertPreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         labels: Optional[torch.Tensor] = None,
+        spk_id: Optional[torch.Tensor] = None,
+        seve_id: Optional[torch.Tensor] = None,
     ) -> Union[Tuple, CausalLMOutput]:
         r"""
         labels (`torch.LongTensor` of shape `(batch_size, target_length)`, *optional*):
@@ -1572,6 +1694,8 @@ class HubertForCTC(HubertPreTrainedModel):
 
         outputs = self.hubert(
             input_values,
+            spk_id,
+            seve_id=seve_id,
             attention_mask=attention_mask,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,

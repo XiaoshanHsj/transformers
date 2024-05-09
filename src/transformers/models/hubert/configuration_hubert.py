@@ -162,6 +162,23 @@ class HubertConfig(PretrainedConfig):
 
     def __init__(
         self,
+        # sjhu
+        spk_num=16,
+        add_lhuc_adapter_pos=-1,
+        seve_intermediate_size=256,
+        spk_intermediate_size=256,
+        hub=False,
+        seve_group=False,
+        seve_num=4,
+        seve_layer=False,
+        spk_layer=False,
+        seve_classifer=False,
+        seve_loss_weight=0.5,
+        seve_classifier_proj_size=512,
+        use_lhuc=False,
+        test_adapt=False,
+        skip_adapt=False,
+
         vocab_size=32,
         hidden_size=768,
         num_hidden_layers=12,
@@ -203,6 +220,23 @@ class HubertConfig(PretrainedConfig):
         **kwargs,
     ):
         super().__init__(**kwargs, pad_token_id=pad_token_id, bos_token_id=bos_token_id, eos_token_id=eos_token_id)
+        # sjhu
+        self.spk_num = spk_num
+        self.add_lhuc_adapter_pos = add_lhuc_adapter_pos
+        self.seve_intermediate_size = seve_intermediate_size
+        self.spk_intermediate_size = spk_intermediate_size
+        self.hub = hub
+        self.seve_group = seve_group
+        self.seve_num = seve_num
+        self.seve_classifer = seve_classifer
+        self.seve_layer = seve_layer
+        self.spk_layer = spk_layer
+        self.seve_loss_weight = seve_loss_weight
+        self.seve_classifier_proj_size = seve_classifier_proj_size
+        self.use_lhuc = use_lhuc
+        self.test_adapt = test_adapt
+        self.skip_adapt = skip_adapt
+
         self.hidden_size = hidden_size
         self.feat_extract_norm = feat_extract_norm
         self.feat_extract_activation = feat_extract_activation
