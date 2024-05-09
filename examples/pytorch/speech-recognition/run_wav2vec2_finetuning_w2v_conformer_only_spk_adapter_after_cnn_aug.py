@@ -294,6 +294,12 @@ data_collator = DataCollatorCTCWithPadding(processor=processor, padding=True)
 wer_metric = load_metric("wer", cache_dir="./models_large/wer")
 cer_metric = load_metric("cer", cache_dir="./models_large/cer")
 
+device_map = "auto"
+world_size = int(os.environ.get("WORLD_SIZE", 1))
+ddp = world_size != 1
+if ddp:
+    device_map = {"": int(os.environ.get("LOCAL_RANK") or 0)}
+
 model_path = "facebook/hubert-large-ls960-ft"
 model = HubertForCTC.from_pretrained(
     model_path,
