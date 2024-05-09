@@ -25,24 +25,6 @@ from torch.utils.data import Dataset
 import argparse
 import functools
 
-def remove_special_characters(batch):
-    batch["text"] = re.sub(chars_to_ignore_regex, '', batch["text"]).upper() + " "
-    return batch
-
-def prepare_dataset(batch):
-    audio = batch["file"]
-
-    # batched output is "un-batched" to ensure mapping is correct
-    batch["input_values"] = processor(audio["array"], sampling_rate=audio["sampling_rate"]).input_values[0]
-    batch["attention_mask"] = processor(audio["array"], sampling_rate=audio["sampling_rate"]).attention_mask[0]
-    batch["input_length"] = len(batch["input_values"])
-    batch["spk_id"] = batch["sid"]
-    batch["seve_id"] = batch["aid"]
-    
-    with processor.as_target_processor():
-        batch["labels"] = processor(batch["text"]).input_ids
-    return batch
-
 def str_none(val):
     if val == 'None':
         return None
@@ -72,6 +54,56 @@ def add_arguments(argname, type, default, help, argparser, **kwargs):
                            type=type,
                            help=help + ' Default: %(default)s.',
                            **kwargs)
+
+parser = argparse.ArgumentParser(description=__doc__)
+add_arg = functools.partial(add_arguments, argparser=parser)
+add_arg("train_data",    type=str, default="/valleblob/v-shujiehu/Dbank/data-fully-aug/train/age_spk_together.txt.csv",       help="训练数据集的路径")
+add_arg("test_data",     type=str, default="/valleblob/v-shujiehu/Dbank/data-fully-aug/evde/age_spk_together.txt.csv",        help="测试数据集的路径")
+add_arg("output_dir",    type=str, default="output/",                  help="训练保存模型的路径")
+add_arg("warmup_steps",  type=int, default=1000,      help="训练预热步数")
+add_arg("logging_steps", type=int, default=3000,     help="打印日志步数")
+add_arg("eval_steps",    type=int, default=3,    help="多少步数评估一次")
+add_arg("save_steps",    type=int, default=3000,    help="多少步数保存模型一次")
+add_arg("eval_delay",    type=int, default=9,    help="延迟多少步数开始评估")
+add_arg("num_workers",   type=int, default=20,       help="读取数据的线程数量")
+add_arg("learning_rate", type=float, default=3e-5,  help="学习率大小")
+add_arg("num_train_epochs", type=int, default=30,      help="训练的轮数")
+add_arg("resume_from_checkpoint",      type=str, default=None, help="恢复训练的检查点路径")
+add_arg("per_device_train_batch_size", type=int, default=8,    help="训练的batch size")
+add_arg("per_device_eval_batch_size",  type=int, default=4,    help="评估的batch size")
+add_arg("gradient_accumulation_steps", type=int, default=1,    help="梯度累积步数")
+add_arg("use_lhuc", type=bool, default=False, help="是否使用LHUC")
+add_arg("spk_num", type=int, default=688, help="有多少个说话人")
+add_arg("spk_layer", type=bool, default=False, help="是否使用adapter")
+add_arg("spk_intermediate_size", type=int, default=128, help="spk adapter的瓶颈层维度")
+
+add_arg("seve_group", type=bool, default=False, help="是否使用Seve LHUC")
+add_arg("seve_num", type=int, default=5, help="seve个数")
+add_arg("seve_layer", type=bool, default=False, help="是否使用adapter")
+add_arg("seve_intermediate_size", type=int, default=128, help="seve adapter的瓶颈层维度")
+
+add_arg("add_lhuc_adapter_pos", type=int, default=-1, help="adapter的具体位置")
+
+args = parser.parse_args()
+print_arguments(args)
+
+def remove_special_characters(batch):
+    batch["text"] = re.sub(chars_to_ignore_regex, '', batch["text"]).upper() + " "
+    return batch
+
+def prepare_dataset(batch):
+    audio = batch["file"]
+
+    # batched output is "un-batched" to ensure mapping is correct
+    batch["input_values"] = processor(audio["array"], sampling_rate=audio["sampling_rate"]).input_values[0]
+    batch["attention_mask"] = processor(audio["array"], sampling_rate=audio["sampling_rate"]).attention_mask[0]
+    batch["input_length"] = len(batch["input_values"])
+    batch["spk_id"] = batch["sid"]
+    batch["seve_id"] = batch["aid"]
+    
+    with processor.as_target_processor():
+        batch["labels"] = processor(batch["text"]).input_ids
+    return batch
 
 class CustomDataset(Dataset):
     def __init__(self,
@@ -193,8 +225,8 @@ class DataCollatorCTCWithPadding:
         labels = labels_batch["input_ids"].masked_fill(labels_batch.attention_mask.ne(1), -100)
 
         batch["labels"] = labels
-        batch["spk_id"] = torch.tensor(speaker_features)
-        batch["seve_id"] = torch.tensor(seve_features)
+        # batch["spk_id"] = torch.tensor(speaker_features)
+        # batch["seve_id"] = torch.tensor(seve_features)
 
         return batch
 
@@ -204,10 +236,10 @@ def map_to_result(batch):
         input_values = torch.tensor(batch["input_values"], device="cuda").unsqueeze(0)
         attention_mask = torch.tensor(batch["attention_mask"], device="cuda").unsqueeze(0)
         spk_id =  [batch["spk_id"]]
-        age_id = [batch["age_id"]]
+        seve_id = [batch["seve_id"]]
         inputs = {"input_values": input_values, "spk_id": spk_id}
-        logits = model(**inputs, age_id=age_id, attention_mask=attention_mask).logits
-        # logits = model(input_values, attention_mask=attention_mask).logits
+        # logits = model(**inputs, seve_id=seve_id, attention_mask=attention_mask).logits
+        logits = model(input_values, attention_mask=attention_mask).logits
 
     model.train()
     batch["text"] = processor.decode(batch["labels"], group_tokens=False)
@@ -228,48 +260,16 @@ def compute_metrics(pred):
     measures = jiwer.compute_measures(results["text"], results["pred_str"])
     return {"wer": measures["wer"]}
 
-parser = argparse.ArgumentParser(description=__doc__)
-add_arg = functools.partial(add_arguments, argparser=parser)
-add_arg("train_data",    type=str, default="/valleblob/v-shujiehu/Dbank/data-fully-aug/train/age_spk_together.txt.csv",       help="训练数据集的路径")
-add_arg("test_data",     type=str, default="/valleblob/v-shujiehu/Dbank/data-fully-aug/evde/age_spk_together.txt.csv",        help="测试数据集的路径")
-add_arg("output_dir",    type=str, default="output/",                  help="训练保存模型的路径")
-add_arg("warmup_steps",  type=int, default=1000,      help="训练预热步数")
-add_arg("logging_steps", type=int, default=3000,     help="打印日志步数")
-add_arg("eval_steps",    type=int, default=3000,    help="多少步数评估一次")
-add_arg("save_steps",    type=int, default=3000,    help="多少步数保存模型一次")
-add_arg("eval_delay",    type=int, default=90000,    help="延迟多少步数开始评估")
-add_arg("num_workers",   type=int, default=20,       help="读取数据的线程数量")
-add_arg("learning_rate", type=float, default=3e-5,  help="学习率大小")
-add_arg("num_train_epochs", type=int, default=30,      help="训练的轮数")
-add_arg("resume_from_checkpoint",      type=str, default=None, help="恢复训练的检查点路径")
-add_arg("per_device_train_batch_size", type=int, default=16,    help="训练的batch size")
-add_arg("per_device_eval_batch_size",  type=int, default=16,    help="评估的batch size")
-add_arg("gradient_accumulation_steps", type=int, default=1,    help="梯度累积步数")
-add_arg("use_lhuc", type=bool, default=False, help="是否使用LHUC")
-add_arg("spk_num", type=int, default=688, help="有多少个说话人")
-add_arg("spk_layer", type=bool, default=False, help="是否使用adapter")
-add_arg("spk_intermediate_size", type=int, default=128, help="spk adapter的瓶颈层维度")
-
-add_arg("seve_group", type=bool, default=False, help="是否使用Seve LHUC")
-add_arg("seve_num", type=int, default=5, help="seve个数")
-add_arg("seve_layer", type=bool, default=False, help="是否使用adapter")
-add_arg("seve_intermediate_size", type=int, default=128, help="seve adapter的瓶颈层维度")
-
-add_arg("add_lhuc_adapter_pos", type=int, default=-1, help="adapter的具体位置")
-
-args = parser.parse_args()
-print_arguments(args)
-
 chars_to_ignore_regex = '[\,\?\.\!\-\;\:\"]'
 
-'''
-ua = load_dataset('csv', data_files={'train':train_csv, 'evde':evde_csv}, cache_dir="large_cache_6")# .shuffle(seed=42)
+
+ua = load_dataset('csv', data_files={'evde':args.test_data}, cache_dir="large_cache_6")# .shuffle(seed=42)
 ua = ua.map(remove_special_characters)
-
 ua = ua.cast_column("file", Audio(sampling_rate=16000))
-'''
 
-processor = Wav2Vec2Processor.from_pretrained("facebook/hubert-large-ls960-ft")
+processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-conformer-rel-pos-large-960h-ft")
+
+ua = ua.map(prepare_dataset, remove_columns=ua["evde"].column_names, num_proc=4)
 '''
 vocab_dict = processor.tokenizer.get_vocab()
 sorted_vocab_dict = {k.lower(): v for k, v in sorted(vocab_dict.items(), key=lambda item: item[1])}
@@ -285,7 +285,7 @@ processor_with_lm = Wav2Vec2ProcessorWithLM(
 )
 '''
 # processor_with_lm.save_pretrained("processor_with_lm")
-# ua = ua.map(prepare_dataset, remove_columns=ua.column_names["train"], num_proc=4)
+
 train_dataset = CustomDataset(data_list_path=args.train_data,
                                   processor=processor)
 test_dataset = CustomDataset(data_list_path=args.test_data,
@@ -300,18 +300,18 @@ ddp = world_size != 1
 if ddp:
     device_map = {"": int(os.environ.get("LOCAL_RANK") or 0)}
 
-model_path = "facebook/hubert-large-ls960-ft"
-model = HubertForCTC.from_pretrained(
+model_path = "facebook/wav2vec2-conformer-rel-pos-large-960h-ft"
+model = Wav2Vec2ConformerForCTC.from_pretrained(
     model_path,
     cache_dir="./models_large/model",
-    spk_num=args.spk_num,
-    # seve_num=5,
-    # add_lhuc_adapter_pos=3,
-    # seve_group=True,
-    use_lhuc=args.use_lhuc,
-    spk_layer=args.spk_layer,
-    spk_intermediate_size=args.spk_intermediate_size,
-    test_adapt=False,
+    # spk_num=args.spk_num,
+    # seve_num=args.seve_num,
+    # add_lhuc_adapter_pos=args.add_lhuc_adapter_pos,
+    # seve_group=args.seve_group,
+    # use_lhuc=args.use_lhuc,
+    # spk_layer=args.spk_layer,
+    # spk_intermediate_size=args.spk_intermediate_size,
+    # test_adapt=False,
     # skip_adapt=True,
     ignore_mismatched_sizes=True,
     ctc_loss_reduction="mean",
