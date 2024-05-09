@@ -322,6 +322,8 @@ model = Wav2Vec2ConformerForCTC.from_pretrained(
 model.config.ctc_zero_infinity = True
 model.freeze_feature_encoder()
 
+model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+
 training_args = TrainingArguments(
     output_dir=args.output_dir,
     # output_dir="tmp",
@@ -330,7 +332,7 @@ training_args = TrainingArguments(
     evaluation_strategy="steps",
     num_train_epochs=args.num_train_epochs,
     fp16=True,
-    gradient_checkpointing=True,
+    # gradient_checkpointing=False,
     ddp_find_unused_parameters=False,
     save_steps=args.save_steps,
     eval_steps=args.eval_steps,
