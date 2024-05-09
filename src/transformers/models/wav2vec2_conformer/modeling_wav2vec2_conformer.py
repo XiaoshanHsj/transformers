@@ -1643,6 +1643,7 @@ class Wav2Vec2ConformerForCTC(Wav2Vec2ConformerPreTrainedModel):
             config.vocab_size - 1]`.
         """
 
+        # check parameters with no grad
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         outputs = self.wav2vec2_conformer(
@@ -1688,6 +1689,10 @@ class Wav2Vec2ConformerForCTC(Wav2Vec2ConformerPreTrainedModel):
                     reduction=self.config.ctc_loss_reduction,
                     zero_infinity=self.config.ctc_zero_infinity,
                 )
+
+        sum_of_parameters = sum(p.sum() for p in self.parameters())
+        zero_sum = sum_of_parameters * 0.0
+        loss = loss + zero_sum
 
         if not return_dict:
             output = (logits,) + outputs[_HIDDEN_STATES_START_POSITION:]
