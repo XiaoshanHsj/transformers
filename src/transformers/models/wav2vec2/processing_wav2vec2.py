@@ -153,11 +153,11 @@ class Wav2Vec2Processor(ProcessorMixin):
         Temporarily sets the tokenizer for processing the input. Useful for encoding the labels when fine-tuning
         Wav2Vec2.
         """
-        warnings.warn(
-            "`as_target_processor` is deprecated and will be removed in v5 of Transformers. You can process your "
-            "labels by using the argument `text` of the regular `__call__` method (either in the same call as "
-            "your audio inputs, or in a separate call."
-        )
+        # warnings.warn(
+        #     "`as_target_processor` is deprecated and will be removed in v5 of Transformers. You can process your "
+        #     "labels by using the argument `text` of the regular `__call__` method (either in the same call as "
+        #     "your audio inputs, or in a separate call."
+        # )
         self._in_target_context_manager = True
         self.current_processor = self.tokenizer
         yield
