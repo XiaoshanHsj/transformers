@@ -1690,9 +1690,9 @@ class Wav2Vec2ConformerForCTC(Wav2Vec2ConformerPreTrainedModel):
                     zero_infinity=self.config.ctc_zero_infinity,
                 )
 
-        sum_of_parameters = sum(p.sum() for p in self.parameters())
-        zero_sum = sum_of_parameters * 0.0
-        loss = loss + zero_sum
+            sum_of_parameters = sum(p.sum() for p in self.parameters())
+            zero_sum = sum_of_parameters * 0.0
+            loss = loss + zero_sum
 
         if not return_dict:
             output = (logits,) + outputs[_HIDDEN_STATES_START_POSITION:]
