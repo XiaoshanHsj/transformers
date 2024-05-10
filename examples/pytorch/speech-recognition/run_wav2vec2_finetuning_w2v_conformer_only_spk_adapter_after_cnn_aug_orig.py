@@ -330,6 +330,7 @@ training_args = TrainingArguments(
     output_dir=args.output_dir,
     # output_dir="tmp",
     group_by_length=True,
+    length_column_name="input_length",
     per_device_train_batch_size=args.per_device_train_batch_size,
     evaluation_strategy="steps",
     num_train_epochs=args.num_train_epochs,
