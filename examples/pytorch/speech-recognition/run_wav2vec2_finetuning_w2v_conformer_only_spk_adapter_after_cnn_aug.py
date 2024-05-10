@@ -360,5 +360,5 @@ trainer = Trainer(
     tokenizer=processor.feature_extractor,
 )
 # print(model)
-trainer.train()
+trainer.train(resume_from_checkpoint=args.resume_from_checkpoint)
 
