@@ -269,7 +269,7 @@ ua = ua.cast_column("file", Audio(sampling_rate=16000))
 
 processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-conformer-rel-pos-large-960h-ft")
 
-ua = ua.map(prepare_dataset, remove_columns=ua["train"].column_names, num_proc=8)
+ua = ua.map(prepare_dataset, remove_columns=ua["train"].column_names, num_proc=20)
 
 min_input_length_in_sec = 0.2
 ua["train"] = ua["train"].filter(lambda x: x > min_input_length_in_sec * processor.feature_extractor.sampling_rate, input_columns=["input_length"])
